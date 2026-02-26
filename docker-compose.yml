@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  printbot:
+    build: .
+    container_name: printbot
+    ports:
+      - "8000:8000"
+    environment:
+      - TEXTBEE_WEBHOOK_KEY=${TEXTBEE_WEBHOOK_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - PRINTER_IP=${PRINTER_IP}
+      - PRINTER_PORT=${PRINTER_PORT:-9100}
+      - LOG_DIR=${LOG_DIR:-/logs}
+      - NAS_LOG_PATH=${NAS_LOG_PATH}
+      - GMAIL_USER=${GMAIL_USER}
+      - GMAIL_PASSWORD=${GMAIL_PASSWORD}
+      - ALERTING_EMAIL=${ALERTING_EMAIL}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - RATE_LIMIT_MESSAGES=${RATE_LIMIT_MESSAGES:-5}
+      - RATE_LIMIT_WINDOW_MINUTES=${RATE_LIMIT_WINDOW_MINUTES:-3}
+      - RATE_LIMIT_COOLDOWN_MINUTES=${RATE_LIMIT_COOLDOWN_MINUTES:-15}
+      - MAX_MESSAGE_CHARS=${MAX_MESSAGE_CHARS:-500}
+    volumes:
+      - ./prompts:/app/prompts
+      - ./logs:/logs
+      - ${NAS_LOG_PATH}:/nas_logs
+    networks:
+      - printbot_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  printbot_network:
+    driver: bridge
