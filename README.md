@@ -29,6 +29,21 @@ PYTHONIOENCODING=utf-8 python test_receipts.py  # on Windows for box-drawing gly
 
 For a live preview while the service runs, point `PRINTER_IP=127.0.0.1` and start `python dev_printer.py` in another terminal.
 
+## The pitch
+
+Yes — this is software whose job is to print SMS messages on a thermal receipt printer. Here is the actual workflow it's built for:
+
+1. **Buy a cheap receipt printer.** A used Epson TM-T88V on eBay is about $25–$40. Give it a good cleaning — there's a real chance the previous owner had it strapped under a counter at a juice bar, and the print head is gunky. Five minutes with isopropyl and a microfiber cloth and it's like new.
+2. **Buy a burner Android phone.** Anything that boots and can hold a SIM. Pop in a prepaid line, install [SMS Gateway by capcom6](https://sms-gate.app/), and the phone becomes a webhook for incoming SMS. Park it on the same Wi-Fi as your host and forget it exists.
+3. **Tunnel the webhook.** Run [cloudflared](https://github.com/cloudflare/cloudflared) on the host with a free `*.trycloudflare.com` tunnel pointing at port 8000 (or a Named Tunnel on your own domain if you want it durable). Paste that URL into SMS Gateway's webhook field. The burner can now reach PrintBot from anywhere a cell tower can reach the burner.
+4. **Text the burner.**
+   - Your todos for the day → printed as a checklist with empty boxes. Tick them by hand. Crumple when done.
+   - A question you don't need an immediate answer to (*"who was the first US senator from Hawaii?"*) → Ollama answers on paper a few seconds later. No phone in hand, no rabbit hole, no eight more tabs.
+   - A link to read later → printed with a short summary and a scannable QR.
+   - Anything else → mirrored verbatim. The printer becomes a quiet inbox that doesn't notify, doesn't beep, and doesn't track you.
+
+It's a deliberately friction-laden, deliberately physical inbox for the parts of using a phone you don't actually like. Worst case, you have a $30 receipt printer that occasionally prints groceries. Not the worst outcome.
+
 ## How it works
 
 ```
