@@ -373,7 +373,7 @@ class Printer:
     )
 
     async def _print_brand(self):
-        """Print the BURNR brand banner at the top of a receipt."""
+        """Print the BRNR brand banner at the top of a receipt."""
         await self._write(self.CMD_ALIGN_CENTER)
         for line in self.BRAND_BANNER:
             await self._text(line + "\n")
