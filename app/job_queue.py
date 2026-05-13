@@ -6,8 +6,8 @@ Handles disk-based queue for reliability
 import json
 import os
 from datetime import datetime, timedelta
-from typing import List, Dict
 from pathlib import Path
+from typing import Dict, List, Optional
 import asyncio
 
 from logger import setup_logger
@@ -24,6 +24,23 @@ class JobQueue:
         self.stale_age_minutes = max(0, int(os.getenv("JOB_QUEUE_STALE_AGE_MINUTES", 0)))
         logger.info(f"Job queue initialized at {self.queue_dir}")
 
+    def _safe_filename_token(self, value: str) -> str:
+        return "".join(ch if ch.isalnum() or ch in ("-", "_", ".", "+") else "_" for ch in value)
+
+    def _job_file_path(self, job_id: str) -> str:
+        safe_job_id = self._safe_filename_token(job_id)
+        return os.path.join(self.queue_dir, f"job_{safe_job_id}.json")
+
+    def _persist_job_file(self, job: Dict) -> Optional[str]:
+        job_id = job.get("job_id")
+        if not job_id:
+            return None
+
+        file_path = self._job_file_path(job_id)
+        with open(file_path, 'w') as f:
+            json.dump(job, f, indent=2)
+        return file_path
+
     async def load_from_disk(self):
         """Load persisted jobs from disk on startup"""
         try:
@@ -36,16 +53,38 @@ class JobQueue:
                     with open(file_path, 'r') as f:
                         job = json.load(f)
 
-                        # Check if job is too old
-                        created_at = datetime.fromisoformat(job.get("created_at", datetime.utcnow().isoformat()))
-                        age_minutes = (datetime.utcnow() - created_at).total_seconds() / 60
+                    created_at = datetime.fromisoformat(job.get("created_at", datetime.utcnow().isoformat()))
+                    age_minutes = (datetime.utcnow() - created_at).total_seconds() / 60
 
-                        if age_minutes > self.max_age_minutes:
-                            logger.info(f"Discarding stale job: {filename} (age: {age_minutes:.0f}m)")
+                    if age_minutes > self.max_age_minutes:
+                        logger.info(f"Discarding stale job: {filename} (age: {age_minutes:.0f}m)")
+                        os.remove(file_path)
+                        continue
+
+                    if not job.get("job_id"):
+                        fallback_sender = job.get("sender", "unknown")
+                        job["job_id"] = f"{datetime.utcnow().isoformat()}_{fallback_sender}"
+                        logger.warning(
+                            f"Queue file {filename} missing job_id; generated {job['job_id']}"
+                        )
+
+                    persisted_path = self._persist_job_file(job)
+                    if (
+                        persisted_path
+                        and os.path.abspath(persisted_path) != os.path.abspath(file_path)
+                        and os.path.exists(file_path)
+                    ):
+                        try:
                             os.remove(file_path)
-                        else:
-                            self.queue.append(job)
-                            logger.info(f"Loaded job from queue: {filename}")
+                        except FileNotFoundError:
+                            pass
+                        except Exception as cleanup_error:
+                            logger.warning(
+                                f"Could not remove legacy queue file {filename}: {cleanup_error}"
+                            )
+
+                    self.queue.append(job)
+                    logger.info(f"Loaded job from queue: {filename}")
                 except Exception as e:
                     logger.error(f"Error loading queue job {filename}: {e}")
 
@@ -56,12 +95,10 @@ class JobQueue:
     async def save_to_disk(self):
         """Persist queue to disk on shutdown"""
         try:
-            for i, job in enumerate(self.queue):
-                filename = f"job_{datetime.utcnow().isoformat()}_{i}.json"
-                file_path = os.path.join(self.queue_dir, filename)
-
-                with open(file_path, 'w') as f:
-                    json.dump(job, f, indent=2)
+            for job in self.queue:
+                if not job.get("job_id"):
+                    job["job_id"] = f"{datetime.utcnow().isoformat()}_{job.get('sender', 'unknown')}"
+                self._persist_job_file(job)
 
             logger.info(f"Saved {len(self.queue)} jobs to disk")
         except Exception as e:
@@ -75,11 +112,8 @@ class JobQueue:
 
             self.queue.append(job)
 
-            # Persist immediately
-            filename = f"job_{job_id}.json"
-            file_path = os.path.join(self.queue_dir, filename)
-            with open(file_path, 'w') as f:
-                json.dump(job, f, indent=2)
+            # Persist immediately using normalized naming
+            self._persist_job_file(job)
 
             logger.info(f"Added job to queue: {job_id}")
             return job_id
@@ -93,10 +127,17 @@ class JobQueue:
             self.queue = [j for j in self.queue if j.get("job_id") != job_id]
 
             # Remove from disk
-            for filename in os.listdir(self.queue_dir):
-                if job_id in filename:
-                    os.remove(os.path.join(self.queue_dir, filename))
-                    logger.info(f"Removed job from queue: {job_id}")
+            file_path = self._job_file_path(job_id)
+
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Removed job from queue: {job_id}")
+            else:
+                logger.debug(
+                    "Queue file already missing for %s (looked for %s)",
+                    job_id,
+                    file_path,
+                )
         except Exception as e:
             logger.error(f"Error removing job {job_id}: {e}")
 

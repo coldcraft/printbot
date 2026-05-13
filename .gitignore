@@ -49,3 +49,8 @@ queue/
 
 # NAS mounts (don't commit, local path)
 /nas_logs
+
+# Local-only (real contact data, Claude Code workspace + creds)
+config/
+.claude/
+contacts.json

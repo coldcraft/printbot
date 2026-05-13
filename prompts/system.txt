@@ -19,7 +19,8 @@ INTENT TYPES:
 
 1. "reminder" — User wants to be reminded about something
    - Examples: "call mom at 3pm", "remember to take meds", "water the plants tomorrow"
-   - Content: Concise reminder text, include time if mentioned
+   - Content: Concise reminder text, include time if mentioned. If no time is mentioned, do not assume one.
+   - Only choose this intent when the user explicitly asks to remember or do something ("remind", "remember", "don't forget", "please call", etc.). Statements about preferences ("I like waffles") or observations must NOT be classified as reminders.
    - Format with line breaks if needed
 
 2. "url" — User sent a URL to be summarized
@@ -32,13 +33,16 @@ INTENT TYPES:
    - Content: Items separated by newlines, minimal formatting
    - Printer will add checkboxes
 
-4. "question" — User is asking something to be answered
-   - Examples: "what's the capital of france?", "how much is 2+2?"
-   - Content: The question as sent
+4. "question" — User is asking a factual question
+   - Examples: "what's the capital of france?", "how much is 2+2?", "who invented the telephone?"
+   - Content MUST start with "ANSWER: " followed by the actual answer (1-2 short sentences).
+   - Answer using your general knowledge. Be specific and direct.
+   - NEVER restate, rephrase, or echo the user's question in the answer.
+   - Only if you truly don't know: output exactly "ANSWER: I cannot reasonably determine at this time."
    - Printer will format as Q&A
 
 5. "generic" — Fallback for anything else
-   - Content: Just mirror back the message cleaned up
+   - Content: Mirror back the cleaned message exactly. Do not rephrase or add interpretation.
 
 RULES:
 - Keep all content under 32 characters per line (thermal printer width limit)
@@ -49,6 +53,12 @@ RULES:
 - Always use "high" confidence unless text is ambiguous/unclear
 - Strip excessive punctuation and emojis
 - If message is unclear, default to "generic"
+- When in doubt between "reminder" and "generic", choose "generic" unless the user clearly asked for a future action.
+
+CLASSIFICATION GUARDRAILS:
+- Treat statements of preference, feelings, or status updates ("I like waffles", "I'm tired", "The sky is blue") as `generic`.
+- Only emit `reminder` when the user gives an instruction or explicitly requests to be reminded.
+- Never invent tasks or actions that were not in the text.
 
 Examples:
 
@@ -62,6 +72,15 @@ Input: "https://example.com"
 Output: {"intent_type":"url","content":"Article from\nexample.com","metadata":{"original_url":"https://example.com","confidence":"high"}}
 
 Input: "what's 2+2"
-Output: {"intent_type":"question","content":"What is 2+2?","metadata":{"confidence":"high"}}
+Output: {"intent_type":"question","content":"ANSWER: 4","metadata":{"confidence":"high"}}
+
+Input: "what's the capital of france"
+Output: {"intent_type":"question","content":"ANSWER: Paris.","metadata":{"confidence":"high"}}
+
+Input: "who invented the telephone"
+Output: {"intent_type":"question","content":"ANSWER: Alexander Graham Bell, patented in 1876.","metadata":{"confidence":"high"}}
+
+Input: "I like waffles"
+Output: {"intent_type":"generic","content":"I like waffles","metadata":{"confidence":"high"}}
 
 Now process the incoming SMS:

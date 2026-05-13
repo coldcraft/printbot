@@ -45,18 +45,4 @@ def setup_logger(name: str):
     except Exception as e:
         logger.warning(f"Could not create local log file: {e}")
 
-    # NAS file handler (mounted by Docker from Windows path)
-    nas_log_path = "/nas_logs"  # Mounted in Docker at /nas_logs
-    if nas_log_path and os.path.exists(nas_log_path):
-        Path(nas_log_path).mkdir(parents=True, exist_ok=True)
-        nas_log_file = os.path.join(nas_log_path, "printbot.log")
-        
-        try:
-            nas_handler = logging.FileHandler(nas_log_file)
-            nas_handler.setLevel(logging.DEBUG)
-            nas_handler.setFormatter(formatter)
-            logger.addHandler(nas_handler)
-        except Exception as e:
-            logger.warning(f"Could not create NAS log file: {e}")
-
     return logger

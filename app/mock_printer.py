@@ -5,9 +5,14 @@ Drops in as a replacement for Printer class with zero code changes
 """
 
 import asyncio
+import os
 import socket
 from typing import Dict
-from datetime import datetime
+from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
 
 from logger import setup_logger
 
@@ -45,6 +50,7 @@ class MockPrinter:
         self.port = port
         self.connected = False
         self.buffer = bytearray()
+        self.display_tz = self._load_display_timezone()
         
     async def connect(self):
         """Simulate connection (no actual connection needed)"""
@@ -175,6 +181,12 @@ class MockPrinter:
     async def _print_question(self, job: Dict):
         """Print Q&A receipt"""
         content = job.get("content", "")
+        metadata = job.get("metadata", {}) if isinstance(job.get("metadata"), dict) else {}
+        question_text = str(
+            metadata.get("question_text")
+            or job.get("original_message", "")
+        ).strip()
+        answer_text = str(content or "").strip()
         timestamp = job.get("received_at", datetime.utcnow().isoformat())
         
         await self._write(self.CMD_ALIGN_CENTER)
@@ -187,7 +199,18 @@ class MockPrinter:
         await self._text("─" * 32 + "\n\n")
         
         await self._write(self.CMD_ALIGN_LEFT)
-        await self._text(content + "\n")
+        if question_text:
+            await self._text("Q:\n")
+            await self._text(question_text + "\n\n")
+        else:
+            logger.warning("Question job missing question_text; using answer only")
+
+        if answer_text and question_text and answer_text.casefold() != question_text.casefold():
+            await self._text("A:\n")
+            await self._text(answer_text + "\n")
+        elif answer_text:
+            await self._text(answer_text + "\n")
+
         await self._text("\n" + "─" * 32 + "\n")
 
     async def _print_generic(self, job: Dict):
@@ -200,11 +223,11 @@ class MockPrinter:
         await self._write(self.CMD_BOLD_ON)
         await self._text(f"{intent.upper()}\n")
         await self._write(self.CMD_BOLD_OFF)
-        
-        dt = datetime.fromisoformat(timestamp)
+
+        dt = self._parse_timestamp(timestamp)
         await self._text(f"{dt.strftime('%b %d %Y  %H:%M')}\n")
         await self._text("─" * 32 + "\n\n")
-        
+
         await self._write(self.CMD_ALIGN_LEFT)
         await self._text(content + "\n")
         await self._text("\n" + "─" * 32 + "\n")
@@ -247,7 +270,30 @@ class MockPrinter:
         try:
             if ts.endswith("Z"):
                 ts = ts.replace("Z", "+00:00")
-            return datetime.fromisoformat(ts)
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(self.display_tz)
         except Exception:
             logger.warning(f"[MOCK] Invalid timestamp '{ts}', using current time")
-            return datetime.utcnow()
+            now = datetime.now(timezone.utc)
+            return now.astimezone(self.display_tz)
+
+    def _load_display_timezone(self):
+        tz_name = os.getenv("PRINTER_TIMEZONE", "").strip()
+        if tz_name and ZoneInfo:
+            try:
+                tz = ZoneInfo(tz_name)
+                logger.info(f"[MOCK] Printer timestamps will use {tz_name}")
+                return tz
+            except Exception:
+                logger.warning(f"[MOCK] Invalid PRINTER_TIMEZONE '{tz_name}', falling back to system zone")
+
+        try:
+            local_tz = datetime.now().astimezone().tzinfo
+            if local_tz:
+                return local_tz
+        except Exception:
+            logger.warning("[MOCK] Could not determine system timezone; defaulting to UTC")
+
+        return timezone.utc
