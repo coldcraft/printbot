@@ -4,64 +4,30 @@ PrintBot is a FastAPI service that takes incoming SMS (or Telegram) messages, as
 
 ## What it looks like
 
-The included simulator renders every print job as a 42-column receipt so you can see exactly what the printer would emit. Three of the five intent types:
+The simulator drives the real ESC/POS pipeline in [app/printer.py](app/printer.py) and renders the resulting byte stream as a PNG that resembles thermal paper — so the previews below are produced by the actual print code, not hand-drawn mockups.
 
-**Reminder** — triggered when the user explicitly asks to be reminded:
+<table>
+  <tr>
+    <td align="center"><b>Reminder</b><br><img src="docs/receipts/reminder.png" alt="Reminder receipt" width="260"></td>
+    <td align="center"><b>Checklist</b><br><img src="docs/receipts/list.png" alt="Checklist receipt" width="260"></td>
+    <td align="center"><b>URL summary</b><br><img src="docs/receipts/url.png" alt="URL summary receipt" width="260"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Question</b><br><img src="docs/receipts/question.png" alt="Question receipt" width="260"></td>
+    <td align="center"><b>Generic</b><br><img src="docs/receipts/generic.png" alt="Generic receipt" width="260"></td>
+    <td></td>
+  </tr>
+</table>
 
-```
-┌────────────────────────────────────────────┐
-│                  [PRINTBOT]                │
-│             May 13 2026  18:12             │
-│ ----------------------------------------   │
-│ [REMINDER]                                 │
-│ Call the dentist                           │
-│ Thursday at 2pm                            │
-│ Bring insurance card                       │
-│ ----------------------------------------   │
-│                         From: 206-555-0123 │
-│ ========================================== │
-└────────────────────────────────────────────┘
-```
+Regenerate locally:
 
-**Checklist** — comma-separated items become a printed list with empty checkboxes:
-
-```
-┌────────────────────────────────────────────┐
-│               [SHOPPING LIST]              │
-│                May 13 2026                 │
-│  ----------------------------------------  │
-│ [ ] Milk                                   │
-│ [ ] Bread                                  │
-│ [ ] Eggs                                   │
-│ [ ] Butter                                 │
-│ [ ] Coffee                                 │
-│ [ ] Apples                                 │
-│ [ ] Chicken breast                         │
-│ ----------------------------------------   │
-│                               from: Family │
-│ ========================================== │
-└────────────────────────────────────────────┘
+```bash
+python test_receipts.py --images                # all samples → docs/receipts/*.png
+python test_receipts.py --reminder              # text-art for one intent
+PYTHONIOENCODING=utf-8 python test_receipts.py  # on Windows for box-drawing glyphs
 ```
 
-**URL summary** — links get fetched, summarized by Ollama, and printed with the domain:
-
-```
-┌────────────────────────────────────────────┐
-│                  [PRINTBOT]                │
-│             May 13 2026  16:12             │
-│  ----------------------------------------  │
-│                [URL SUMMARY]               │
-│         https://github.com/example         │
-│        A Python library for thermal        │
-│      receipt printing and formatting.      │
-│       Great for POS systems and IoT!       │
-│  ----------------------------------------  │
-│                               sent via SMS │
-│ ========================================== │
-└────────────────────────────────────────────┘
-```
-
-Generate any of these locally with `python test_receipts.py --reminder | --list | --url | --mixed` (set `PYTHONIOENCODING=utf-8` on Windows). For a live preview while the service runs, point `PRINTER_IP=127.0.0.1` and start `python dev_printer.py`.
+For a live preview while the service runs, point `PRINTER_IP=127.0.0.1` and start `python dev_printer.py` in another terminal.
 
 ## How it works
 

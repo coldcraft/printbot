@@ -6,17 +6,19 @@ captured ESC/POS byte stream through printer_simulator.PrinterSimulator so
 the previews match what the physical printer would actually emit.
 
 Usage:
-    python test_receipts.py                # all samples
-    python test_receipts.py --reminder     # one sample
-    python test_receipts.py --list
-    python test_receipts.py --url
-    python test_receipts.py --question
-    python test_receipts.py --generic
+    python test_receipts.py                       # all samples, text-art to stdout
+    python test_receipts.py --reminder            # one sample, text-art
+    python test_receipts.py --images              # all samples, save PNGs to docs/receipts/
+    python test_receipts.py --images --reminder   # one sample as PNG
+    python test_receipts.py --image-dir path/to/out  # custom output dir (implies --images)
+
+Subsets: --reminder --list --url --question --generic (repeatable)
 
 On Windows, set PYTHONIOENCODING=utf-8 so the cp437 box-drawing glyphs in
-the BANJA brand banner can render to your terminal.
+the BRNR brand banner can render to your terminal.
 """
 
+import argparse
 import asyncio
 import os
 import sys
@@ -28,6 +30,8 @@ if APP_DIR not in sys.path:
 
 from printer import Printer  # noqa: E402
 from printer_simulator import PrinterSimulator  # noqa: E402
+
+DEFAULT_IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", "receipts")
 
 
 class CapturingPrinter(Printer):
@@ -49,12 +53,24 @@ class CapturingPrinter(Printer):
         self.captured.extend(data)
 
 
-async def _render(job) -> str:
+async def _build_simulator(job) -> PrinterSimulator:
     printer = CapturingPrinter()
     await printer.print_receipt(job)
     sim = PrinterSimulator(width=Printer.CHAR_WIDTH, default_codepage=printer.codepage)
     sim.feed(bytes(printer.captured))
+    return sim
+
+
+async def _render(job) -> str:
+    sim = await _build_simulator(job)
     return sim.render_to_string()
+
+
+async def _render_image(job, out_path: str) -> None:
+    sim = await _build_simulator(job)
+    img = sim.render_to_image()
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    img.save(out_path)
 
 
 def _iso(dt: datetime) -> str:
@@ -118,7 +134,7 @@ SAMPLES = {
 }
 
 
-async def _main(selected):
+async def _run_text(selected):
     for key in selected:
         title, builder = SAMPLES[key]
         print("\n" + "=" * 50)
@@ -127,18 +143,33 @@ async def _main(selected):
         print(await _render(builder()))
 
 
-def main():
-    if len(sys.argv) > 1:
-        keys = [arg.lstrip("-") for arg in sys.argv[1:]]
-        unknown = [k for k in keys if k not in SAMPLES]
-        if unknown:
-            print(f"Unknown sample(s): {', '.join(unknown)}")
-            print(f"Available: {', '.join(SAMPLES.keys())}")
-            sys.exit(1)
-    else:
-        keys = list(SAMPLES.keys())
+async def _run_images(selected, out_dir):
+    for key in selected:
+        _, builder = SAMPLES[key]
+        path = os.path.join(out_dir, f"{key}.png")
+        await _render_image(builder(), path)
+        print(f"wrote {path}")
 
-    asyncio.run(_main(keys))
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--images", action="store_true",
+                        help="render samples to PNG files instead of stdout text")
+    parser.add_argument("--image-dir", default=None,
+                        help=f"output directory for PNGs (default: {DEFAULT_IMAGE_DIR})")
+    parser.add_argument("--help", "-h", action="help")
+    for key in SAMPLES:
+        parser.add_argument(f"--{key}", dest="samples", action="append_const", const=key)
+    args = parser.parse_args()
+
+    keys = args.samples or list(SAMPLES.keys())
+    want_images = args.images or bool(args.image_dir)
+    out_dir = args.image_dir or DEFAULT_IMAGE_DIR
+
+    if want_images:
+        asyncio.run(_run_images(keys, out_dir))
+    else:
+        asyncio.run(_run_text(keys))
 
 
 if __name__ == "__main__":

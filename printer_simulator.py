@@ -210,6 +210,71 @@ class PrinterSimulator:
         self._flush_line()
         self.output.append(self._apply_alignment(f"[PHOTO {width_dots}x{height_dots}]"))
     
+    # Candidate monospace fonts with cp437/box-drawing coverage.
+    IMAGE_FONT_CANDIDATES = (
+        "consola.ttf",       # Windows: Consolas
+        "consolab.ttf",      # Windows: Consolas Bold
+        "DejaVuSansMono.ttf",
+        "Menlo.ttc",
+        "Courier New.ttf",
+        "cour.ttf",
+    )
+
+    def render_to_image(
+        self,
+        font_size: int = 18,
+        margin: int = 24,
+        line_spacing: int = 4,
+        paper_color=(252, 250, 244),
+        ink_color=(28, 28, 30),
+        font_path: Optional[str] = None,
+    ):
+        """Render the captured receipt to a PIL Image that resembles a thermal print.
+
+        Requires Pillow. Box-drawing characters (the brand banner) come out
+        cleanest with a Unicode-aware monospace font — Consolas on Windows,
+        DejaVu Sans Mono elsewhere — and one of those is picked automatically
+        unless ``font_path`` is provided explicitly.
+        """
+        from PIL import Image, ImageDraw, ImageFont
+
+        self._flush_line()
+
+        font = None
+        if font_path:
+            font = ImageFont.truetype(font_path, font_size)
+        else:
+            for candidate in self.IMAGE_FONT_CANDIDATES:
+                try:
+                    font = ImageFont.truetype(candidate, font_size)
+                    break
+                except (OSError, IOError):
+                    continue
+        if font is None:
+            font = ImageFont.load_default()
+
+        # Measure the natural cell width for the receipt's max line width.
+        sample = "M" * self.width
+        bbox = font.getbbox(sample)
+        content_width = bbox[2] - bbox[0]
+
+        ascent, descent = font.getmetrics()
+        line_height = ascent + descent + line_spacing
+
+        img_width = content_width + 2 * margin
+        img_height = max(1, len(self.output)) * line_height + 2 * margin
+
+        img = Image.new("RGB", (img_width, img_height), paper_color)
+        draw = ImageDraw.Draw(img)
+
+        y = margin
+        for line in self.output:
+            if line:
+                draw.text((margin, y), line, font=font, fill=ink_color)
+            y += line_height
+
+        return img
+
     def render_to_string(self) -> str:
         """Return formatted printer output as string"""
         self._flush_line()  # Flush any remaining content
