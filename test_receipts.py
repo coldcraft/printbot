@@ -80,8 +80,8 @@ def _iso(dt: datetime) -> str:
 def job_reminder():
     return {
         "intent_type": "reminder",
-        "content": "Cancel couples on June 12",
-        "sender_display": "Sarey McBeary",
+        "content": "Pick up dry cleaning Friday",
+        "sender_display": "Alice",
         "received_at": _iso(datetime(2026, 5, 4, 20, 24)),
     }
 
@@ -90,7 +90,7 @@ def job_list():
     return {
         "intent_type": "list",
         "content": "Milk, Bread, Eggs, Butter, Coffee, Apples, Chicken breast",
-        "sender_display": "Family",
+        "sender_display": "Alice",
         "received_at": _iso(datetime(2026, 5, 13, 14, 0)),
     }
 
@@ -100,7 +100,7 @@ def job_url():
         "intent_type": "url",
         "content": "A Python library for thermal receipt printing and formatting. Great for POS systems and IoT projects.",
         "metadata": {"original_url": "https://github.com/example/repo"},
-        "sender_display": "drew",
+        "sender_display": "Bob",
         "received_at": _iso(datetime(2026, 5, 12, 21, 22)),
     }
 
@@ -111,7 +111,7 @@ def job_question():
         "content": "ANSWER: Alexander Graham Bell, patented in 1876.",
         "original_message": "who invented the telephone?",
         "metadata": {"question_text": "who invented the telephone?"},
-        "sender_display": "drew",
+        "sender_display": "Bob",
         "received_at": _iso(datetime(2026, 5, 12, 21, 21)),
     }
 
@@ -119,8 +119,8 @@ def job_question():
 def job_generic():
     return {
         "intent_type": "generic",
-        "content": "Any updates, bitch?",
-        "sender_display": "drew",
+        "content": "Running late, be there in 10",
+        "sender_display": "Bob",
         "received_at": _iso(datetime(2026, 5, 12, 21, 21)),
     }
 

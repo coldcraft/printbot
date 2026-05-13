@@ -4,8 +4,16 @@ Simulates ESC/POS output for Epson TM-T88V printer on the dev PC
 """
 
 import sys
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from datetime import datetime
+
+
+class _QREmbed:
+    """Marker placed in PrinterSimulator.output for a QR code symbol."""
+    __slots__ = ("data",)
+
+    def __init__(self, data: str):
+        self.data = data
 
 
 class PrinterSimulator:
@@ -198,13 +206,7 @@ class PrinterSimulator:
         self._flush_line()
         data = self._pending_qr_data or ""
         self._pending_qr_data = None
-        label = "[QR CODE]"
-        if data:
-            shown = data if len(data) <= self.width - 2 else data[:self.width - 5] + "..."
-            self.output.append(self._apply_alignment(label))
-            self.output.append(self._apply_alignment(shown))
-        else:
-            self.output.append(self._apply_alignment(label))
+        self.output.append(_QREmbed(data))
 
     def _emit_photo_placeholder(self, width_dots: int, height_dots: int) -> None:
         self._flush_line()
@@ -262,40 +264,101 @@ class PrinterSimulator:
         line_height = ascent + descent + line_spacing
 
         img_width = content_width + 2 * margin
-        img_height = max(1, len(self.output)) * line_height + 2 * margin
+
+        # QR target size: roughly 11 text lines tall, capped at content width.
+        qr_target_px = min(content_width, line_height * 11)
+        qr_cache = {}
+
+        def _make_qr(entry: _QREmbed):
+            if entry in qr_cache:
+                return qr_cache[entry]
+            try:
+                import qrcode
+            except ImportError:
+                qr_cache[entry] = None
+                return None
+            qr = qrcode.QRCode(border=1, box_size=8)
+            qr.add_data(entry.data)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color=ink_color, back_color=paper_color).convert("RGB")
+            if qr_img.width != qr_target_px:
+                qr_img = qr_img.resize((qr_target_px, qr_target_px), Image.NEAREST)
+            qr_cache[entry] = qr_img
+            return qr_img
+
+        # First pass: total height.
+        total = 0
+        for entry in self.output:
+            if isinstance(entry, _QREmbed):
+                qr_img = _make_qr(entry)
+                total += (qr_img.height if qr_img is not None else line_height * 2) + line_spacing
+            else:
+                total += line_height
+        img_height = total + 2 * margin
 
         img = Image.new("RGB", (img_width, img_height), paper_color)
         draw = ImageDraw.Draw(img)
 
         y = margin
-        for line in self.output:
-            if line:
-                draw.text((margin, y), line, font=font, fill=ink_color)
-            y += line_height
+        for entry in self.output:
+            if isinstance(entry, _QREmbed):
+                qr_img = _make_qr(entry)
+                if qr_img is not None:
+                    x = (img_width - qr_img.width) // 2
+                    img.paste(qr_img, (x, y))
+                    y += qr_img.height + line_spacing
+                else:
+                    placeholder = self._center_text("[QR CODE]")
+                    draw.text((margin, y), placeholder, font=font, fill=ink_color)
+                    y += line_height
+                    if entry.data:
+                        draw.text((margin, y), self._center_text(entry.data[:self.width]), font=font, fill=ink_color)
+                        y += line_height
+                    else:
+                        y += line_height
+            elif entry:
+                draw.text((margin, y), entry, font=font, fill=ink_color)
+                y += line_height
+            else:
+                y += line_height
 
         return img
 
+    def _center_text(self, text: str) -> str:
+        pad = max(0, (self.width - len(text)) // 2)
+        return " " * pad + text
+
+    def _stringify_output(self) -> List[str]:
+        """Expand QR embeds into placeholder text lines for plain/string rendering."""
+        lines: List[str] = []
+        for entry in self.output:
+            if isinstance(entry, _QREmbed):
+                lines.append(self._center_text("[QR CODE]"))
+                if entry.data:
+                    shown = entry.data if len(entry.data) <= self.width else entry.data[:self.width - 3] + "..."
+                    lines.append(self._center_text(shown))
+            else:
+                lines.append(entry)
+        return lines
+
     def render_to_string(self) -> str:
         """Return formatted printer output as string"""
-        self._flush_line()  # Flush any remaining content
-        
-        output_text = "\n".join(self.output)
-        
-        # Create a nice display frame
+        self._flush_line()
+        lines = self._stringify_output()
+
         header = "┌" + "─" * (self.width + 2) + "┐"
         footer = "└" + "─" * (self.width + 2) + "┘"
-        
+
         framed_output = header + "\n"
-        for line in self.output:
+        for line in lines:
             framed_output += "│ " + line.ljust(self.width) + " │\n"
         framed_output += footer
-        
         return framed_output
-    
+
     def render_to_plain(self) -> str:
         """Return plain printer output without frame"""
-        self._flush_line()  # Flush any remaining content
-        return "\n".join(self.output)
+        self._flush_line()
+        return "\n".join(self._stringify_output())
 
 
 class ESCPOSParser:
