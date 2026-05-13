@@ -4,7 +4,7 @@ Simulates ESC/POS output for Epson TM-T88V printer on the dev PC
 """
 
 import sys
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from datetime import datetime
 
 
@@ -34,86 +34,116 @@ class PrinterSimulator:
     CMD_SIZE_NORMAL = ESC + b'!' + b'\x00'
     CMD_SIZE_DOUBLE = ESC + b'!' + b'\x11'
     
-    # Character sets
-    CODE_PAGE_CP437 = 0  # Code Page 437
-    CODE_PAGE_CP437_ALT = 16
-    CODE_PAGE_CP850 = 2   # OEM multilingual
-    CODE_PAGE_UTF8 = 255
-    
-    def __init__(self, width: int = 42):
+    # ESC/POS codepage selector (ESC t N) → Python codec
+    CODEPAGE_TABLE = {
+        0: "cp437",
+        2: "cp850",
+        3: "cp860",
+        4: "cp863",
+        5: "cp865",
+        16: "cp1252",
+    }
+
+    def __init__(self, width: int = 42, default_codepage: str = "cp437"):
         """Initialize simulator with paper width in characters"""
         self.width = width
         self.output: List[str] = []
-        self.current_line = ""
+        self.current_bytes = bytearray()
         self.alignment = "left"  # left, center, right
         self.bold = False
         self.size_multiplier = 1  # 1 = normal, 2+ = larger
         self.active = False
+        self.codepage = default_codepage
         
     def feed(self, data: bytes) -> None:
         """Process incoming ESC/POS data stream"""
         i = 0
-        while i < len(data):
-            # Check for ESC/POS commands
-            if data[i:i+1] == self.ESC:
-                if i + 1 < len(data):
-                    if data[i+1:i+2] == b'@':  # Initialize
-                        self._cmd_init()
-                        i += 2
-                    elif data[i+1:i+2] == b'E':  # Bold
-                        if i + 2 < len(data):
-                            self.bold = data[i+2:i+3] == b'\x01'
-                            i += 3
-                        else:
-                            i += 2
-                    elif data[i+1:i+2] == b'a':  # Align
-                        if i + 2 < len(data):
-                            align_code = data[i+2:i+3]
-                            if align_code == b'\x00':
-                                self.alignment = "left"
-                            elif align_code == b'\x01':
-                                self.alignment = "center"
-                            elif align_code == b'\x02':
-                                self.alignment = "right"
-                            i += 3
-                        else:
-                            i += 2
-                    elif data[i+1:i+2] == b'!':  # Size
-                        if i + 2 < len(data):
-                            size_code = data[i+2:i+3]
-                            if size_code == b'\x00':
-                                self.size_multiplier = 1
-                            elif size_code == b'\x11':  # Double height/width
-                                self.size_multiplier = 2
-                            i += 3
-                        else:
-                            i += 2
-                    else:
-                        # Unknown ESC command, skip it
-                        i += 2
-                else:
-                    i += 1
-            elif data[i:i+1] == self.GS and i + 1 < len(data):
-                if data[i+1:i+2] == b'V':  # Cut
-                    if i + 3 < len(data):
-                        self._cmd_cut()
-                        i += 4
-                    else:
-                        i += 2
-                else:
+        n = len(data)
+        self._pending_qr_data: Optional[str] = getattr(self, "_pending_qr_data", None)
+        while i < n:
+            b = data[i:i+1]
+            if b == self.ESC and i + 1 < n:
+                op = data[i+1:i+2]
+                if op == b'@':  # Initialize
+                    self._cmd_init()
                     i += 2
-            elif data[i:i+1] == b'\n':  # Line feed
+                elif op == b'E' and i + 2 < n:  # Bold
+                    self.bold = data[i+2:i+3] == b'\x01'
+                    i += 3
+                elif op == b'a' and i + 2 < n:  # Align
+                    code = data[i+2:i+3]
+                    self.alignment = {b'\x00': "left", b'\x01': "center", b'\x02': "right"}.get(code, self.alignment)
+                    i += 3
+                elif op == b'!' and i + 2 < n:  # Size
+                    self.size_multiplier = 2 if data[i+2:i+3] == b'\x11' else 1
+                    i += 3
+                elif op == b't' and i + 2 < n:  # Codepage select: ESC t N
+                    cp_id = data[i+2]
+                    self.codepage = self.CODEPAGE_TABLE.get(cp_id, self.codepage)
+                    i += 3
+                else:
+                    # Unknown ESC command, skip ESC + op
+                    i += 2
+            elif b == self.GS and i + 1 < n:
+                op = data[i+1:i+2]
+                if op == b'V':  # Paper cut: GS V m [n]
+                    # GS V A 0x00 (function A) is 4 bytes; older "GS V m" is 3.
+                    if i + 2 < n and data[i+2:i+3] == b'A':
+                        i += 4 if i + 3 < n else 3
+                    else:
+                        i += 3
+                    self._cmd_cut()
+                elif op == b'(' and i + 2 < n and data[i+2:i+3] == b'k':
+                    # GS ( k pL pH cn fn [data...]  — used for QR codes
+                    if i + 4 < n:
+                        pL = data[i+3]
+                        pH = data[i+4]
+                        param_len = pL + (pH << 8)
+                        block_end = i + 5 + param_len
+                        if block_end <= n:
+                            cn = data[i+5] if i + 5 < n else 0
+                            fn = data[i+6] if i + 6 < n else 0
+                            # QR "store symbol data" → fn = 0x50 ('P')
+                            if cn == 49 and fn == 80 and i + 8 <= block_end:
+                                qr_payload = bytes(data[i+8:block_end])
+                                try:
+                                    self._pending_qr_data = qr_payload.decode(self.codepage, errors="replace")
+                                except Exception:
+                                    self._pending_qr_data = qr_payload.decode("ascii", errors="replace")
+                            # QR "print symbol data" → fn = 0x51 ('Q')
+                            elif cn == 49 and fn == 81:
+                                self._emit_qr_placeholder()
+                            i = block_end
+                        else:
+                            i = n  # truncated; bail
+                    else:
+                        i = n
+                elif op == b'v' and i + 2 < n and data[i+2:i+3] == b'0':
+                    # GS v 0 m xL xH yL yH d1...dk  — raster bit image
+                    if i + 7 < n:
+                        xL, xH = data[i+4], data[i+5]
+                        yL, yH = data[i+6], data[i+7]
+                        x_bytes = xL + (xH << 8)
+                        y = yL + (yH << 8)
+                        payload = x_bytes * y
+                        block_end = i + 8 + payload
+                        if block_end <= n:
+                            self._emit_photo_placeholder(x_bytes * 8, y)
+                            i = block_end
+                        else:
+                            i = n
+                    else:
+                        i = n
+                else:
+                    # Unknown GS command — skip GS + op only
+                    i += 2
+            elif b == b'\n':  # Line feed
                 self._flush_line()
                 i += 1
-            elif data[i:i+1] == b'\r':  # Carriage return (ignore)
+            elif b == b'\r':  # Carriage return (ignore)
                 i += 1
             else:
-                # Regular character
-                try:
-                    char = chr(data[i])
-                    self.current_line += char
-                except:
-                    pass
+                self.current_bytes.append(data[i])
                 i += 1
     
     def _cmd_init(self) -> None:
@@ -123,43 +153,38 @@ class PrinterSimulator:
         self.alignment = "left"
         self.bold = False
         self.size_multiplier = 1
-    
+
     def _cmd_cut(self) -> None:
         """Cut paper - add visual separator"""
         self._flush_line()
         self.output.append("=" * self.width)
         self.output.append("")
-    
+
+    def _decode_current(self) -> str:
+        if not self.current_bytes:
+            return ""
+        try:
+            return self.current_bytes.decode(self.codepage, errors="replace")
+        except LookupError:
+            return self.current_bytes.decode("cp437", errors="replace")
+
     def _flush_line(self) -> None:
         """Process and output current line"""
-        if not self.current_line and not self.output:
+        text = self._decode_current()
+        self.current_bytes = bytearray()
+        if not text and not self.output:
             return
-            
-        # Handle size multiplier via line duplication
-        lines_to_add = []
-        if self.current_line:
-            line = self.current_line
-            
-            # Apply text formatting
-            if self.bold:
-                line = f"[{line}]"  # Indicate bold with brackets in simulation
-            
-            # Apply alignment
-            line = self._apply_alignment(line)
-            
-            # Add line multiple times if size > 1
-            for _ in range(self.size_multiplier):
-                lines_to_add.append(line)
-            
-            self.current_line = ""
-        
-        self.output.extend(lines_to_add)
-    
+        if not text:
+            self.output.append("")
+            return
+
+        line = self._apply_alignment(text)
+        for _ in range(self.size_multiplier):
+            self.output.append(line)
+
     def _apply_alignment(self, text: str) -> str:
         """Apply text alignment"""
-        # Strip to visible content width (accounting for formatting)
-        visible_len = len(text.replace("[", "").replace("]", ""))
-        
+        visible_len = len(text)
         if self.alignment == "center":
             padding = max(0, (self.width - visible_len) // 2)
             return " " * padding + text
@@ -168,6 +193,22 @@ class PrinterSimulator:
             return " " * padding + text
         else:  # left
             return text
+
+    def _emit_qr_placeholder(self) -> None:
+        self._flush_line()
+        data = self._pending_qr_data or ""
+        self._pending_qr_data = None
+        label = "[QR CODE]"
+        if data:
+            shown = data if len(data) <= self.width - 2 else data[:self.width - 5] + "..."
+            self.output.append(self._apply_alignment(label))
+            self.output.append(self._apply_alignment(shown))
+        else:
+            self.output.append(self._apply_alignment(label))
+
+    def _emit_photo_placeholder(self, width_dots: int, height_dots: int) -> None:
+        self._flush_line()
+        self.output.append(self._apply_alignment(f"[PHOTO {width_dots}x{height_dots}]"))
     
     def render_to_string(self) -> str:
         """Return formatted printer output as string"""
