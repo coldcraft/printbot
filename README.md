@@ -41,6 +41,7 @@ Yes — this is software whose job is to print SMS messages on a thermal receipt
    - A question you don't need an immediate answer to (*"who was the first US senator from Hawaii?"*) → Ollama answers on paper a few seconds later. No phone in hand, no rabbit hole, no eight more tabs.
    - A link to read later → prints a short summary and a scannable QR. A physical internet bookmark, in 2026.
    - Anything else → mirrored verbatim. The printer becomes a quiet inbox that doesn't notify, doesn't beep, and doesn't track you.
+5. **Use the Receipts as Kindling.** Complete the loop. Burn the brnr. 
 
 It's a deliberately friction-laden, deliberately physical inbox for the parts of using a phone you don't actually like. Worst case, you have a $30 receipt printer that occasionally prints groceries. Not the worst outcome.
 
