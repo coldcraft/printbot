@@ -258,15 +258,27 @@ class TelegramBridge:
             logger.warning(f"Telegram message from unauthorized chat_id={chat_id}; ignoring")
             return
 
-        text = (message.get("text") or "").strip()
+        # Telegram puts typed words in `text` for a plain message, but in
+        # `caption` when the user attaches a photo/file. A reply sent as a photo
+        # therefore has empty `text` — fall back to caption so it isn't silently
+        # dropped (the words are what we send as the outbound SMS).
+        text = (message.get("text") or message.get("caption") or "").strip()
+        reply_to = message.get("reply_to_message")
+
         if not text:
+            # Bare media reply with no caption: we can't turn an image into an
+            # outbound SMS, so tell the user rather than silently dropping it.
+            if reply_to:
+                await self.send_message(
+                    "⚠️ I can only send text back as SMS. Type your reply (a "
+                    "caption on a photo works too). Outbound MMS isn't supported yet."
+                )
             return
 
         if text.startswith("/"):
             await self._handle_command(text)
             return
 
-        reply_to = message.get("reply_to_message")
         if not reply_to:
             await self.send_message(
                 "Reply directly to a forwarded SMS to send a response back. "
@@ -274,9 +286,16 @@ class TelegramBridge:
             )
             return
 
-        quoted = reply_to.get("text") or ""
+        # Phone number can appear in `text` (regular SMS forward) or `caption`
+        # (MMS forward via sendPhoto). Search both.
+        quoted = (reply_to.get("text") or "") + "\n" + (reply_to.get("caption") or "")
         phone_match = PHONE_RE.search(quoted)
         if not phone_match:
+            logger.warning(
+                "phone-number extraction failed; reply_to keys=%s, quoted text=%r",
+                sorted((reply_to or {}).keys()),
+                quoted[:300],
+            )
             await self.send_message(
                 "Couldn't find a phone number in the message you replied to. "
                 "Make sure you're replying to a forwarded SMS."
